@@ -35,6 +35,9 @@
 
 #include "cypress-touchkey.h"
 #include <linux/regulator/consumer.h>
+#if defined(CONFIG_GENERIC_BLN)
+#include <linux/bln.h>
+#endif
 
 /*
 Melfas touchkey register
@@ -55,7 +58,15 @@ Melfas touchkey register
 #define END_KEY 0x04
 
 #define I2C_M_WR 0		/* for i2c */
++
+
+  	60 	
+
+#if defined (CONFIG_TOUCHKEY_HAPTIC)
 #define DEVICE_NAME "melfas_touchkey"
+#else
+#define DEVICE_NAME "sec_touchkey"
+#endif
 
 #if defined (CONFIG_USA_MODEL_SGH_T769)
 #define BUILTIN_FW_VER	0x0F
@@ -238,7 +249,7 @@ static int i2c_touchkey_write(u8 * val, unsigned int len)
 	struct i2c_msg msg[1];
 	int retry = 2;
 
-	if ((touchkey_driver == NULL) || !(touchkey_enable == 1)) {
+	if (touchkey_driver == NULL) {
 		printk(KERN_DEBUG "[TKEY] touchkey is not enabled.W\n");
 		return -ENODEV;
 	}
@@ -589,7 +600,10 @@ static void melfas_touchkey_early_suspend(struct early_suspend *h)
 #if defined(CONFIG_KOR_MODEL_SHV_E160L) || defined (CONFIG_USA_MODEL_SGH_I717)    
     int ret = 0;
     signed char int_data[] ={0x80};
-#endif    
+#endif
+    if (touchkey_enable < 0)
+        return;
+
     touchkey_enable = 0;
     set_touchkey_debug('S');
     printk(KERN_DEBUG "melfas_touchkey_early_suspend\n");
@@ -699,6 +713,11 @@ static void melfas_touchkey_early_resume(struct early_suspend *h)
 #endif 	
 	set_touchkey_debug('R');
 	printk(KERN_DEBUG "[TKEY] melfas_touchkey_early_resume\n");
+#if defined(CONFIG_GENERIC_BLN)
+	if (touchkey_enable == -3) {
+	cancel_bln_activity();
+	} else
+#endif
 	if (touchkey_enable < 0) {
 		printk("[TKEY] %s touchkey_enable: %d\n", __FUNCTION__, touchkey_enable);
 		return;
@@ -860,6 +879,46 @@ schedule_delayed_work(&touch_resume_work, msecs_to_jiffies(500));
 
 }
 #endif				// End of CONFIG_HAS_EARLYSUSPEND
+
+#if defined(CONFIG_GENERIC_BLN)
+static void cypress_touchkey_enable_backlight(void) {
+    signed char int_data[] ={0x10};
+    i2c_touchkey_write(int_data, 1);
+}
+
+static void cypress_touchkey_disable_backlight(void) {
+    signed char int_data[] ={0x20};
+    i2c_touchkey_write(int_data, 1);
+}
+
+static bool cypress_touchkey_enable_led_notification(void) {
+    if (touchkey_enable)
+        return false;
+
+    tkey_vdd_enable(1);
+    msleep(50);
+    tkey_led_vdd_enable(1);
+
+    touchkey_enable = -3;
+    return true;
+}
+
+static void cypress_touchkey_disable_led_notification(void) {
+    tkey_led_vdd_enable(0);
+    tkey_vdd_enable(0);
+
+    touchkey_enable = 0;
+}
+
+static struct bln_implementation cypress_touchkey_bln = {
+    .enable = cypress_touchkey_enable_led_notification,
+    .disable = cypress_touchkey_disable_led_notification,
+    .on = cypress_touchkey_enable_backlight,
+    .off = cypress_touchkey_disable_backlight,
+};
+#endif
+
+
 
 extern int mcsdl_download_binary_data(void);
 static int i2c_touchkey_probe(struct i2c_client *client, const struct i2c_device_id *id)
@@ -1033,6 +1092,9 @@ if (get_hw_rev() >=0x02) {
 }
 #endif
 	set_touchkey_debug('K');
+#if defined(CONFIG_GENERIC_BLN)
+	register_bln_implementation(&cypress_touchkey_bln);
+#endif
 	return 0;
 }
 
